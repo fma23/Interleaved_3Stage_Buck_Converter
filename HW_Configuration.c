@@ -7,7 +7,7 @@
 void Comparator_Config(void)
 {
 
-//    /* Configure Comparator 1: link cmp1 to pwm3*/
+    /* Configure Comparator 1: link cmp1 to pwm3*/
     EALLOW;
     SysCtrlRegs.PCLKCR3.bit.COMP1ENCLK = 1;
     Comp1Regs.COMPCTL.bit.COMPDACEN = 1;             // Power up Comparator locally
@@ -19,7 +19,6 @@ void Comparator_Config(void)
     EPwm1Regs.HRPCTL.bit.PWMSYNCSEL = 1;             // PWM SYNC generated at CTR = ZRO for synchronizing internal ramp
     Comp1Regs.COMPCTL.bit.CMPINV = 0;                // Comparator Output passed
     EDIS;
-
 
     /* Configure Comparator 2: link cmp2 to pwm4*/
     EALLOW;
