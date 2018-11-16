@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExportImportMemento.1>
+<VarMeta IMemento.internal.id="Duty1A"/>
+<VarMeta IMemento.internal.id="Duty1A_Set"/>
+<VarMeta IMemento.internal.id="Gui_Vin"/>
+<VarMeta IMemento.internal.id="Gui_Vout1"/>
+<VarMeta IMemento.internal.id="Gui_VSet1"/>
+<VarMeta IMemento.internal.id="Gui_IL1"/>
+<VarMeta IMemento.internal.id="Gui_ItripSet"/>
+<VarMeta IMemento.internal.id="FaultFlg1"/>
+<VarMeta IMemento.internal.id="ClearFault1"/>
+<VarMeta IMemento.internal.id="Active_LD1_EN"/>
+<VarMeta IMemento.internal.id="Continuous_ON"/>
+<VarMeta IMemento.internal.id="pid2p2z_Gui"/>
+<VarMeta IMemento.internal.id="coeff_change"/>
+<VarMeta IMemento.internal.id="Pgain1_Gui"/>
+<VarMeta IMemento.internal.id="Igain1_Gui"/>
+<VarMeta IMemento.internal.id="AdcResult"/>
+<VarMeta IMemento.internal.id="Cmpns2"/>
+<VarMeta IMemento.internal.id="GRP( COMP2 )"/>
+<VarMeta IMemento.internal.id="ADCRESULT0"/>
+<VarMeta IMemento.internal.id="PID3outArray"/>
+<VarMeta IMemento.internal.id="PID2outArray"/>
+<VarMeta IMemento.internal.id="PID1outArray"/>
+</ExportImportMemento.1>

@@ -1,0 +1,485 @@
+//###########################################################################
+//
+// TITLE:       PID.cla
+//
+// Description:
+//
+//###########################################################################
+
+
+// Included Files
+#include "DSP28x_Project.h"
+#include "F2806x_Cla_typedefs.h"
+#include "IQmathLib.h"
+#include <stdbool.h>
+
+#include "InterLvbuck_shared.h"
+#include "Compensator_CLA.h"
+#include "IQMathLib.h"
+
+
+#define MEALLOW __asm(" MEALLOW")
+#define MEDIS __asm(" MEDIS")
+
+
+
+// CLA ISRs
+//
+__interrupt void Cla1Task1 (void)
+{
+    __mdebugstop();
+
+    if(BuckControl1_Ref < BUCK_ADCREF)
+    {
+       BuckControl1_Ref+=  VoutSlewRate;
+    }
+    else
+    {
+        BuckControl1_Ref=BUCK_ADCREF;
+    }
+
+
+#if (COMPENSATOR==3)
+
+    PID1.CurrInput=(float) AdcResult.ADCRESULT0;
+    PID1.Error_K0= BuckControl1_Ref-PID1.CurrInput;
+
+
+    //proportional term
+    PID1.Kp_Term= KP_Coeff*PID1.Error_K0;
+
+    //Integrator term
+    PID1.Integeral_Term= PID1.Integeral_Term+ KI_Coeff*PID1.Error_K0;
+    PID1.Integeral_Term=PID1.Integeral_Term+PID1.Delta;
+
+    //Derivative term
+    PID1.D_Input= PID1.CurrInput-PID1.PastInput;
+
+    // Compute PID Output
+    PID1.PIDOuput= PID1.Kp_Term+ PID1.Integeral_Term- KD_Coeff*PID1.D_Input;
+    if(PID1.PIDOuput > PIDOut_MAX)
+    {
+     PID1.Delta=PIDOut_MAX-(PID1.PIDOuput);  //added for anti windup
+     PID1.Delta=PID1.Delta*1;
+     PID1.PIDOuput = PIDOut_MAX;
+    }
+    else if(PID2.PIDOuput < PIDOut_MIN)
+    {
+     PID1.Delta=PIDOut_MIN-(PID1.PIDOuput);  //added for anti windup
+     PID1.Delta=PID1.Delta*1;
+     PID1.PIDOuput = PIDOut_MIN;
+    }
+    else
+    {
+     PID1.Delta=0;
+    }
+    PID1.PastInput=PID2.CurrInput;
+    // PID2_Out=PID2.Error_K0;    //for debugging
+    temp1=PID1.Error_K0;
+
+    MEALLOW;
+    Comp1Regs.RAMPMAXREF_SHDW = PID1.PIDOuput*16;   //Cmpns2.Out*2^10*2^16; Cmpns3 is an analog value scaled by (1/3.3)*2e12
+    //Comp1Regs.DACVAL.all = PID1.PIDOuput*0.25;   // 2e10/2e12
+    MEDIS;
+
+
+#elif(COMPENSATOR==1||COMPENSATOR==2)
+
+    Cmpns1.Ref=BuckControl1_Ref;
+    Cmpns1.Fdb=(float) AdcResult.ADCRESULT0;  //Multiply by 1/(2^12) to convert it to per unit float;
+
+    //CNTL2P2Z_CLA(Cmpns2, Cmpns2_Coef);
+
+   /* Compute the error */
+   Cmpns1.Errn=Cmpns1.Ref-Cmpns1.Fdb;
+   // PreSat = e(n-2)*B2 + e(n-1)*B1 + e(n)*B0 + u(n-2)*A2 + u(n-1)*A1
+   Cmpns1.OutPreSat = Cmpns1_Coef.b2*Cmpns1.Errn2 +Cmpns1_Coef.b1*Cmpns1.Errn1 + Cmpns1_Coef.b0*Cmpns1.Errn + Cmpns1_Coef.a2*Cmpns1.Out2 + Cmpns1_Coef.a1*Cmpns1.Out1;
+   /* store history of error*/
+   Cmpns1.Errn2 = Cmpns1.Errn1;
+   Cmpns1.Errn1 = Cmpns1.Errn;
+   Cmpns1.Out=Cmpns2.OutPreSat;
+   /*  Saturate the output, use intrinsic for the CLA compiler */
+   Cmpns1.Out=__mminf32(Cmpns1.Out,Cmpns1_Coef.OutMax);
+   Cmpns1.Out=__mmaxf32(Cmpns1.Out,Cmpns1_Coef.OutMin);
+   /* store the history of outputs */
+   Cmpns1.Out2 = Cmpns1.Out1;
+   Cmpns1.Out1 = Cmpns1.Out;
+
+   MEALLOW;
+   //Comp1Regs.DACVAL.all = Cmpns1.Out*0.25; //Multiply by 2^6, because this is Q10
+   //Comp1Regs.RAMPMAXREF_SHDW=Cmpns1.Out*16;  //Cmpns1.Out*2^10*2^6;
+   Comp1Regs.RAMPMAXREF_SHDW=Cmpns1.Out*16;  //Cmpns1.Out*2^10*2^6;
+   //Comp1Regs.RAMPMAXREF_SHDW=32000;        //used for testing trip zone functionality
+
+   MEDIS;
+
+   temp1=Cmpns1.Errn;  //used for debugging
+
+#endif
+
+
+}
+__interrupt void
+Cla1Task2 (void)
+{
+    __mdebugstop();
+
+    temp2=temp2+1;
+
+      if(BuckControl2_Ref < BUCK_ADCREF)
+       {
+          BuckControl2_Ref+=  VoutSlewRate;
+       }
+       else
+       {
+           BuckControl2_Ref=BUCK_ADCREF;
+       }
+
+#if (COMPENSATOR==3)
+
+    PID2.CurrInput=(float) AdcResult.ADCRESULT1;
+    PID2.Error_K0= BoostControl2_Ref-PID2.CurrInput;
+
+    //proportional term
+    PID2.Kp_Term= KP_Coeff*PID2.Error_K0;
+
+    //Integrator term
+    PID2.Integeral_Term= PID2.Integeral_Term+ KI_Coeff*PID2.Error_K0;
+    PID2.Integeral_Term=PID2.Integeral_Term+PID2.Delta;
+
+    //Derivative term
+    PID2.D_Input= PID2.CurrInput-PID2.PastInput;
+
+    // Compute PID Output
+    PID2.PIDOuput= PID2.Kp_Term+ PID2.Integeral_Term- KD_Coeff*PID2.D_Input;
+    if(PID2.PIDOuput > PIDOut_MAX)
+    {
+     PID2.Delta=PIDOut_MAX-(PID2.PIDOuput);  //added for anti windup
+     PID2.Delta=PID2.Delta*1;
+     PID2.PIDOuput = PIDOut_MAX;
+    }
+    else if(PID2.PIDOuput < PIDOut_MIN)
+    {
+     PID2.Delta=PIDOut_MIN-(PID2.PIDOuput);  //added for anti windup
+     PID2.Delta=PID2.Delta*1;
+     PID2.PIDOuput = PIDOut_MIN;
+    }
+    else
+    {
+     PID2.Delta=0;
+    }
+    PID2.PastInput=PID2.CurrInput;
+    //PID2_Out=PID2.PIDOuput; //for debugging
+    PID2_Out=PID2.Error_K0;  //for debugging
+    //temp2=PID2.Error_K0;
+
+    MEALLOW;
+    Comp2Regs.RAMPMAXREF_SHDW = PID2.PIDOuput*16;   //Cmpns2.Out*2^10*2^16; Cmpns3 is an analog value scaled by (1/3.3)*2e12
+    //Comp2Regs.DACVAL.all = PID2.PIDOuput*0.25;   // 2e10/2e12
+   // Comp2Regs.RAMPMAXREF_SHDW = 23808;
+    MEDIS;
+
+#elif(COMPENSATOR==1||COMPENSATOR==2)
+
+    Cmpns2.Ref=BuckControl2_Ref;
+    Cmpns2.Fdb=(float) AdcResult.ADCRESULT1;  //Multiply by 1/(2^12) to convert it to per unit float;
+
+   /* Compute the error */
+   Cmpns2.Errn=Cmpns2.Ref-Cmpns2.Fdb;
+   /* PreSat = e(n-2)*B2 + e(n-1)*B1 + e(n)*B0 + u(n-2)*A2 + u(n-1)*A1  - Ref converted to float from Q24 */
+   Cmpns2.OutPreSat = Cmpns2_Coef.b2*Cmpns2.Errn2 +Cmpns2_Coef.b1*Cmpns2.Errn1 + Cmpns2_Coef.b0*Cmpns2.Errn + Cmpns2_Coef.a2*Cmpns2.Out2 + Cmpns2_Coef.a1*Cmpns2.Out1;
+   /* store history of error*/
+   Cmpns2.Errn2 = Cmpns2.Errn1;
+   Cmpns2.Errn1 = Cmpns2.Errn;
+   Cmpns2.Out=Cmpns2.OutPreSat;
+   /*  Saturate the output, use intrinsic for the CLA compiler */
+   Cmpns2.Out=__mminf32(Cmpns2.Out,Cmpns2_Coef.OutMax);
+   Cmpns2.Out=__mmaxf32(Cmpns2.Out,Cmpns2_Coef.OutMin);
+   /* store the history of outputs */
+   Cmpns2.Out2 = Cmpns2.Out1;
+   Cmpns2.Out1 = Cmpns2.Out;
+
+   MEALLOW;
+   //Comp2Regs.DACVAL.all = Cmpns2.Out*0.25; //Multiply by 2^6, because this is Q10
+   //Comp2Regs.RAMPMAXREF_SHDW=Cmpns2.Out*16;  //Cmpns1.Out*2^10*2^6;
+   Comp2Regs.RAMPMAXREF_SHDW=  Cmpns2.Out*16;  //Cmpns1.Out*2^10*2^6; //23808;
+   //Comp2Regs.DACVAL.all=500;
+   //Comp2Regs.RAMPMAXREF_SHDW=32000;
+   MEDIS;
+
+   //temp2=Cmpns2.Errn;
+
+#endif
+
+
+}
+
+__interrupt void
+Cla1Task3 (void)
+{
+    __mdebugstop();
+
+    temp3=temp3+1;
+
+    if(BuckControl3_Ref < BUCK_ADCREF)
+       {
+        BuckControl3_Ref+=  VoutSlewRate;
+       }
+       else
+       {
+           BuckControl3_Ref=BUCK_ADCREF;
+       }
+
+#if (COMPENSATOR==3)
+
+     PID3.CurrInput=(float) AdcResult.ADCRESULT2;
+     PID3.Error_K0= BoostControl3_Ref-PID3.CurrInput;
+
+     //proportional term
+     PID3.Kp_Term= KP_Coeff*PID3.Error_K0;
+
+     //Integrator term
+     PID3.Integeral_Term= PID3.Integeral_Term+ KI_Coeff*PID3.Error_K0;
+     PID3.Integeral_Term=PID3.Integeral_Term+PID3.Delta;
+
+     //Derivative term
+     PID3.D_Input= PID3.CurrInput-PID3.PastInput;
+
+     // Compute PID Output
+     PID3.PIDOuput= PID3.Kp_Term+ PID3.Integeral_Term- KD_Coeff*PID3.D_Input;
+     if(PID2.PIDOuput > PIDOut_MAX)
+     {
+      PID3.Delta=PIDOut_MAX-(PID3.PIDOuput);  //added for anti windup
+      PID3.Delta=PID3.Delta*1;
+      PID3.PIDOuput = PIDOut_MAX;
+     }
+     else if(PID2.PIDOuput < PIDOut_MIN)
+     {
+      PID3.Delta=PIDOut_MIN-(PID3.PIDOuput);  //added for anti windup
+      PID3.Delta=PID3.Delta*1;
+      PID3.PIDOuput = PIDOut_MIN;
+     }
+     else
+     {
+      PID3.Delta=0;
+     }
+     PID3.PastInput=PID3.CurrInput;
+     PID3_Out=PID3.PIDOuput;
+
+     MEALLOW;
+    // Comp3Regs.RAMPMAXREF_SHDW = PID3.PIDOuput*16;   //Cmpns3.Out*2^10*2^16; Cmpns3 is an analog value scaled by (1/3.3)*2e12
+     //Comp3Regs.DACVAL.all = PID3.PIDOuput*0.25;   // 2e10/2e12
+     Comp3Regs.RAMPMAXREF_SHDW = 23808;
+     MEDIS;
+
+#elif(COMPENSATOR==1||COMPENSATOR==2)
+
+//   Cmpns3.Ref=BoostControl_Ref*(0.000244140625);
+//   Cmpns3.Fdb=(float) AdcResult.ADCRESULT2*(0.000244140625);  //Multiply by 1/(2^12) to convert it to per unit float;
+
+   Cmpns3.Ref=BuckControl3_Ref;
+   Cmpns3.Fdb=(float) AdcResult.ADCRESULT2;  //Multiply by 1/(2^12) to convert it to per unit float;
+
+   //CNTL2P2Z_CLA(Cmpns3, Cmpns3_Coef);
+
+   /* Compute the error */
+   Cmpns3.Errn=Cmpns3.Ref-Cmpns3.Fdb;
+   /* PreSat = e(n-2)*B2 + e(n-1)*B1 + e(n)*B0 + u(n-2)*A2 + u(n-1)*A1  - Ref converted to float from Q24 */
+   Cmpns3.OutPreSat = Cmpns3_Coef.b2*Cmpns3.Errn2 +Cmpns3_Coef.b1*Cmpns3.Errn1 + Cmpns3_Coef.b0*Cmpns3.Errn + Cmpns3_Coef.a2*Cmpns3.Out2 + Cmpns3_Coef.a1*Cmpns3.Out1;
+   /* store history of error*/
+   Cmpns3.Errn2 = Cmpns3.Errn1;
+   Cmpns3.Errn1 = Cmpns3.Errn;
+   Cmpns3.Out=Cmpns3.OutPreSat;
+   /*  Saturate the output, use intrinsic for the CLA compiler */
+   Cmpns3.Out=__mminf32(Cmpns3.Out,Cmpns3_Coef.OutMax);
+   Cmpns3.Out=__mmaxf32(Cmpns3.Out,Cmpns3_Coef.OutMin);
+   /* store the history of outputs */
+   Cmpns3.Out2 = Cmpns3.Out1;
+   Cmpns3.Out1 = Cmpns3.Out;
+
+
+   MEALLOW;
+   //Comp3Regs.RAMPMAXREF_SHDW=Cmpns3.Out*16;  //Cmpns1.Out*2^10*2^16; Cmpns3 is an analog value scaled by 1/3.3
+   //Comp3Regs.DACVAL.all = Cmpns2.Out*0.25; //Multiply by 2^6, because this is Q10
+   Comp3Regs.RAMPMAXREF_SHDW= Cmpns3.Out*16;  //Cmpns1.Out*2^10*2^6; //23808;
+   //Comp3Regs.RAMPMAXREF_SHDW=32000;
+   MEDIS;
+
+
+#endif
+
+}
+
+__interrupt void
+Cla1Task4 (void)
+{
+
+ BuckControl1_Ref=0;
+ BuckControl2_Ref=0;
+ BuckControl3_Ref=0;
+
+#if(COMPENSATOR==1)
+
+  temp1=0;
+  temp2=0;
+  temp3=0;
+
+  Cmpns1_Coef.b0=b0_Coef;
+  Cmpns1_Coef.b1=b1_Coef;
+  Cmpns1_Coef.b2=b2_Coef;
+  Cmpns1_Coef.a1=a1_Coef;
+  Cmpns1_Coef.a2=a2_Coef;
+  Cmpns1_Coef.OutMax=Max;        // Parameter: Maximum output
+  Cmpns1_Coef.OutMin=Min;        // Parameter: Minimum output
+
+  Cmpns1.Ref=BuckControl1_Ref;       // Input: Reference input
+  Cmpns1.Fdb=0;           // Input: Feedback input
+  Cmpns1.Errn=0;          // Variable: Error
+  Cmpns1.Errn1=0;         // Parameter: Proportional gain
+  Cmpns1.Errn2=0;         // Variable: Proportional output
+  Cmpns1.Out=0;           // Variable: Integral output
+  Cmpns1.Out1=0;          // Variable: Derivative output
+  Cmpns1.Out2=0;          // Variable: Derivative output
+  Cmpns1.OutPreSat=0;     // Variable: Pre-saturated output
+
+  Cmpns2_Coef.b0=b0_Coef;
+  Cmpns2_Coef.b1=b1_Coef;
+  Cmpns2_Coef.b2=b2_Coef;
+  Cmpns2_Coef.a1=a1_Coef;
+  Cmpns2_Coef.a2=a2_Coef;
+  Cmpns2_Coef.OutMax=Max;        // Parameter: Maximum output
+  Cmpns2_Coef.OutMin=Min;        // Parameter: Minimum output
+
+  Cmpns2.Ref=BuckControl2_Ref;       // Input: Reference input
+  Cmpns2.Fdb=0;           // Input: Feedback input
+  Cmpns2.Errn=0;          // Variable: Error
+  Cmpns2.Errn1=0;         // Parameter: Proportional gain
+  Cmpns2.Errn2=0;         // Variable: Proportional output
+  Cmpns2.Out=0;           // Variable: Integral output
+  Cmpns2.Out1=0;          // Variable: Derivative output
+  Cmpns2.Out2=0;          // Variable: Derivative output
+  Cmpns2.OutPreSat=0;     // Variable: Pre-saturated output
+
+  Cmpns3_Coef.b0=b0_Coef;
+  Cmpns3_Coef.b1=b1_Coef;
+  Cmpns3_Coef.b2=b2_Coef;
+  Cmpns3_Coef.a1=a1_Coef;
+  Cmpns3_Coef.a2=a2_Coef;
+  Cmpns3_Coef.OutMax=Max;        // Parameter: Maximum output
+  Cmpns3_Coef.OutMin=Min;        // Parameter: Minimum output
+
+  Cmpns3.Ref=BuckControl3_Ref;       // Input: Reference input
+  Cmpns3.Fdb=0;           // Input: Feedback input
+  Cmpns3.Errn=0;          // Variable: Error
+  Cmpns3.Errn1=0;         // Parameter: Proportional gain
+  Cmpns3.Errn2=0;         // Variable: Proportional output
+  Cmpns3.Out=0;           // Variable: Integral output
+  Cmpns3.Out1=0;          // Variable: Derivative output
+  Cmpns3.Out2=0;          // Variable: Derivative output
+  Cmpns3.OutPreSat=0;     // Variable: Pre-saturated output
+
+#elif(COMPENSATOR==2)
+
+  KP_Coeff=KP;
+  KI_Coeff=KI*T_Sample/2;
+  KD_Coeff=KD/T_Sample;
+
+  Cmpns1_Coef.b0=KP_Coeff+KI_Coeff+KD_Coeff;
+  Cmpns1_Coef.b1=KI_Coeff-KP_Coeff-2*KD_Coeff;
+  Cmpns1_Coef.b2=KD_Coeff;
+  Cmpns1_Coef.a1=1;
+  Cmpns1_Coef.a2=0;
+  Cmpns1_Coef.OutMax=Max;        // Parameter: Maximum output
+  Cmpns1_Coef.OutMin=Min;        // Parameter: Minimum output
+
+  Cmpns1.Ref=BoostControl1_Ref;       // Input: Reference input
+  Cmpns1.Fdb=0;           // Input: Feedback input
+  Cmpns1.Errn=0;          // Variable: Error
+  Cmpns1.Errn1=0;         // Parameter: Proportional gain
+  Cmpns1.Errn2=0;         // Variable: Proportional output
+  Cmpns1.Out=0;           // Variable: Integral output
+  Cmpns1.Out1=0;          // Variable: Derivative output
+  Cmpns1.Out2=0;          // Variable: Derivative output
+  Cmpns1.OutPreSat=0;     // Variable: Pre-saturated output
+
+  Cmpns2_Coef.b0=KP_Coeff+KI_Coeff+KD_Coeff;
+  Cmpns2_Coef.b1=KI_Coeff-KP_Coeff-2*KD_Coeff;
+  Cmpns2_Coef.b2=KD_Coeff;
+  Cmpns2_Coef.a1=1;
+  Cmpns2_Coef.a2=0;
+  Cmpns2_Coef.OutMax=Max;        // Parameter: Maximum output
+  Cmpns2_Coef.OutMin=Min;        // Parameter: Minimum output
+
+  Cmpns2.Ref=BoostControl2_Ref;       // Input: Reference input
+  Cmpns2.Fdb=0;           // Input: Feedback input
+  Cmpns2.Errn=0;          // Variable: Error
+  Cmpns2.Errn1=0;         // Parameter: Proportional gain
+  Cmpns2.Errn2=0;         // Variable: Proportional output
+  Cmpns2.Out=0;           // Variable: Integral output
+  Cmpns2.Out1=0;          // Variable: Derivative output
+  Cmpns2.Out2=0;          // Variable: Derivative output
+  Cmpns2.OutPreSat=0;     // Variable: Pre-saturated output
+
+
+  Cmpns3_Coef.b0=KP_Coeff+KI_Coeff+KD_Coeff;
+  Cmpns3_Coef.b1=KI_Coeff-KP_Coeff-2*KD_Coeff;
+  Cmpns3_Coef.b2=KD_Coeff;
+  Cmpns3_Coef.a1=1;
+  Cmpns3_Coef.a2=0;
+  Cmpns3_Coef.OutMax=Max;        // Parameter: Maximum output
+  Cmpns3_Coef.OutMin=Min;        // Parameter: Minimum output
+
+  Cmpns3.Ref=BoostControl3_Ref;       // Input: Reference input
+  Cmpns3.Fdb=0;           // Input: Feedback input
+  Cmpns3.Errn=0;          // Variable: Error
+  Cmpns3.Errn1=0;         // Parameter: Proportional gain
+  Cmpns3.Errn2=0;         // Variable: Proportional output
+  Cmpns3.Out=0;           // Variable: Integral output
+  Cmpns3.Out1=0;          // Variable: Derivative output
+  Cmpns3.Out2=0;          // Variable: Derivative output
+  Cmpns3.OutPreSat=0;     // Variable: Pre-saturated output
+
+#elif(COMPENSATOR==3)
+
+  temp1=0;
+  temp2=0;
+  temp3=0;
+
+  PID1_Out=0;
+  PID2_Out=0;
+  PID3_Out=0;
+
+  PID1.Delta=0;
+  PID1.PIDOuput=0;
+  PID1.PIDOuput_K1=0;
+  PID1.Error_K0=0;
+  PID1.Error_K1=0;
+  PID1.Error_K2=0;
+  PID1.pidmax=PIDOut_MAX;
+  PID1.pidmin=0;
+
+  PID2.Delta=0;
+  PID2.PIDOuput=0;
+  PID2.PIDOuput_K1=0;
+  PID2.Error_K0=0;
+  PID2.Error_K1=0;
+  PID2.Error_K2=0;
+  PID2.pidmax=PIDOut_MAX;
+  PID2.pidmin=0;
+
+  PID3.Delta=0;
+  PID3.PIDOuput=0;
+  PID3.PIDOuput_K1=0;
+  PID3.Error_K0=0;
+  PID3.Error_K1=0;
+  PID3.Error_K2=0;
+  PID3.pidmax=PIDOut_MAX;
+  PID3.pidmin=0;
+
+  KP_Coeff=KP;
+  KI_Coeff=KI*T_Sample/2;
+  KD_Coeff=KD/T_Sample;
+
+#endif
+
+}
